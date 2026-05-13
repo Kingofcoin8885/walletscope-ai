@@ -480,9 +480,8 @@ export default function App() {
   }[market.status];
 
   const aiBadge = aiResult
-    ? aiResult.provider === "openai"
-      ? { variant: "default" as const, label: "AI Live" }
-      : aiResult?.provider === "groq" ? { variant: "default" as const, label: "AI Live" } : { variant: "secondary" as const, label: "AI Fallback" }
+   ? (aiResult.provider === "openai" || aiResult.provider === "groq")
+  ? { variant: "default" as const, label: "AI Live" } : { variant: "secondary" as const, label: "AI Fallback" }
     : analysisLoading
       ? { variant: "outline" as const, label: "AI Running" }
       : { variant: "outline" as const, label: "AI Ready" };
