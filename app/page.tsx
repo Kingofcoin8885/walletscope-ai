@@ -89,7 +89,7 @@ type AiResultPayload = {
   summary: string;
   verdict: string;
   tags: string[];
-  provider: "openai" | "fallback";
+  provider: "openai" | "groq" | "fallback";
   onchainSource: "etherscan" | "none";
 };
 
