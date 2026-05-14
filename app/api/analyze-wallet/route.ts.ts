@@ -20,7 +20,7 @@ type AnalysisResult = {
   summary: string;
   verdict: string;
   tags: string[];
-  provider: "groq" | "fallback";
+  provider: "gemini" | "fallback";
   onchainSource: "etherscan" | "none";
   error?: string;
 };
@@ -163,7 +163,10 @@ export async function POST(req: Request): Promise<NextResponse<AnalysisResult>> 
     market = body.market;
 
     if (!address) {
-      return NextResponse.json({ ...createFallbackAnalysis("0xdeadbeef"), provider: "fallback", onchainSource: "none", error: "address is required" }, { status: 400 });
+      return NextResponse.json(
+        { ...createFallbackAnalysis("0xdeadbeef"), provider: "fallback", onchainSource: "none", error: "address is required" },
+        { status: 400 }
+      );
     }
 
     const onchain = await fetchOnchainSummary(address);
@@ -174,55 +177,48 @@ export async function POST(req: Request): Promise<NextResponse<AnalysisResult>> 
       return NextResponse.json({ ...createFallbackAnalysis(address, market), provider: "fallback", onchainSource });
     }
 
-    // ✅ openai パッケージを使わず fetch で直接 OpenRouter を呼ぶ
-    const model = process.env.GROQ_MODEL ?? "mistralai/mistral-7b-instruct:free";
+    // ✅ Gemini API を直接呼ぶ
+    const prompt = `あなたはオンチェーンウォレット分析の専門家です。以下のデータを分析して、日本語で投資スタイルを診断してください。
 
-    const userPayload = {
-      wallet_address: address,
-      onchain_summary: onchain ?? "Etherscan data unavailable.",
-      market_context: { symbol: market?.symbol ?? null, change24h: market?.change24h ?? null, volume: market?.volume ?? null },
-      output_requirements: {
-        profile: "投資スタイルを表す短いラベル（1行・日本語）",
-        summary: "1〜2文で要約（日本語）",
-        verdict: "総合的な評価を1文で（日本語）",
-        tags: "英語の短いタグを正確に3つ",
-      },
-    };
+ウォレットアドレス: ${address}
+オンチェーンデータ: ${onchain ? JSON.stringify(onchain) : "データなし（市場コンテキストのみで分析してください）"}
+市場データ: ${JSON.stringify({ symbol: market?.symbol, change24h: market?.change24h, volume: market?.volume })}
+
+以下のJSON形式のみで回答してください（マークダウン不要）:
+{
+  "profile": "投資スタイルを表す短いラベル（日本語）",
+  "summary": "オンチェーンデータを引用した1〜2文の要約（日本語）",
+  "verdict": "総合評価を1文で（日本語）",
+  "tags": ["英語タグ1", "英語タグ2", "英語タグ3"]
+}`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://walletscope.ai",
-        "X-Title": "WalletScope AI",
-      },
-      body: JSON.stringify({
-        model,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: "You are an on-chain wallet analyst. Produce a concise Japanese analysis. Respond with valid JSON only — no markdown fences.",
-          },
-          { role: "user", content: JSON.stringify(userPayload) },
-        ],
-      }),
-      signal: controller.signal,
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json" },
+        }),
+        signal: controller.signal,
+      }
+    );
 
     clearTimeout(timeout);
 
     if (!response.ok) {
-      throw new Error(`OpenRouter error: ${response.status}`);
+      throw new Error(`Gemini error: ${response.status}`);
     }
 
-    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-    const raw = data.choices?.[0]?.message?.content?.trim();
+    const data = (await response.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
 
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     if (!raw) {
       return NextResponse.json({ ...createFallbackAnalysis(address, market), provider: "fallback", onchainSource });
     }
@@ -239,7 +235,7 @@ export async function POST(req: Request): Promise<NextResponse<AnalysisResult>> 
       summary: parsed.summary,
       verdict: parsed.verdict,
       tags: Array.isArray(parsed.tags) && parsed.tags.length >= 3 ? parsed.tags.slice(0, 3) : ["AI-assisted", "Onchain", "Live"],
-      provider: "groq",
+      provider: "gemini",
       onchainSource,
     });
 
