@@ -89,7 +89,7 @@ type AiResultPayload = {
   summary: string;
   verdict: string;
   tags: string[];
-  provider: "openai" | "groq" | "fallback";
+  provider: "openai" | "fallback";
   onchainSource: "etherscan" | "none";
 };
 
@@ -480,8 +480,9 @@ export default function App() {
   }[market.status];
 
   const aiBadge = aiResult
-   ? (aiResult.provider === "openai" || aiResult.provider === "groq")
-  ? { variant: "default" as const, label: "AI Live" } : { variant: "secondary" as const, label: "AI Fallback" }
+    ? aiResult.provider === "openai"
+      ? { variant: "default" as const, label: "AI Live" }
+      : { variant: "secondary" as const, label: "AI Fallback" }
     : analysisLoading
       ? { variant: "outline" as const, label: "AI Running" }
       : { variant: "outline" as const, label: "AI Ready" };
@@ -579,7 +580,7 @@ export default function App() {
                         : "AI endpoint があれば利用し、なければローカル要約にフォールバックします。"}
                     </p>
                   </div>
-                  <Badge variant={aiResult?.provider === "openai" || aiResult?.provider === "groq" ? "default" : "secondary"} className="rounded-full px-3 py-1">
+                  <Badge variant={aiResult?.provider === "openai" ? "default" : "secondary"} className="rounded-full px-3 py-1">
                     {aiResult?.provider === "openai" ? "AI Live" : "Demo Ready"}
                   </Badge>
                 </div>

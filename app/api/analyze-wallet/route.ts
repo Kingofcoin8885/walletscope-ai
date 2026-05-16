@@ -61,8 +61,7 @@ function hashString(input: string): number {
 
 function weiToEth(weiStr: string): number {
   try {
-    const val = BigInt(weiStr);
-    return Number(val / BigInt(1e12)) / 1e6;
+    return Number(BigInt(weiStr)) / 1e18;
   } catch {
     return 0;
   }
@@ -73,8 +72,9 @@ async function fetchOnchainSummary(address: string): Promise<OnchainSummary | nu
   if (!apiKey) return null;
 
   const base = "https://api.etherscan.io/api";
-  const txUrl = `${base}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=20&sort=desc&apikey=${apiKey}`;
-  const tokenUrl = `${base}?module=account&action=tokentx&address=${address}&startblock=0&endblock=99999999&page=1&offset=20&sort=desc&apikey=${apiKey}`;
+  const params = `&address=${address}&startblock=0&endblock=99999999&page=1&offset=20&sort=desc&apikey=${apiKey}`;
+  const txUrl = `${base}?module=account&action=txlist${params}`;
+  const tokenUrl = `${base}?module=account&action=tokentx${params}`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
@@ -86,8 +86,8 @@ async function fetchOnchainSummary(address: string): Promise<OnchainSummary | nu
     ]);
     clearTimeout(timeout);
 
-    const txJson = (await txRes.json()) as { status: string; result: EtherscanTx[] | string };
-    const tokenJson = (await tokenRes.json()) as { status: string; result: EtherscanTx[] | string };
+    const txJson = await txRes.json();
+    const tokenJson = await tokenRes.json();
 
     const txs: EtherscanTx[] = txJson.status === "1" && Array.isArray(txJson.result) ? txJson.result : [];
     const tokens: EtherscanTx[] = tokenJson.status === "1" && Array.isArray(tokenJson.result) ? tokenJson.result : [];
@@ -98,11 +98,12 @@ async function fetchOnchainSummary(address: string): Promise<OnchainSummary | nu
     const errorTxs = txs.filter((t) => t.isError === "1").length;
     const gasValues = txs.map((t) => Number(t.gasUsed)).filter((n) => n > 0);
     const avgGasUsed = gasValues.length ? Math.round(gasValues.reduce((a, b) => a + b, 0) / gasValues.length) : 0;
-    const counterparties = new Set(txs.map((t) => (t.from.toLowerCase() === address.toLowerCase() ? t.to : t.from)).filter(Boolean));
+    const lowerAddr = address.toLowerCase();
+    const counterparties = new Set(txs.map((t) => (t.from.toLowerCase() === lowerAddr ? t.to : t.from)).filter(Boolean));
     const timestamps = txs.map((t) => Number(t.timeStamp)).filter((n) => n > 0).sort((a, b) => a - b);
     const firstTs = timestamps[0] ?? null;
     const lastTs = timestamps[timestamps.length - 1] ?? null;
-    const valueMovedEth = txs.filter((t) => t.from.toLowerCase() === address.toLowerCase()).reduce((acc, t) => acc + weiToEth(t.value), 0);
+    const valueMovedEth = txs.filter((t) => t.from.toLowerCase() === lowerAddr).reduce((acc, t) => acc + weiToEth(t.value), 0);
     const symbolCount: Record<string, number> = {};
     for (const t of tokens) {
       if (t.tokenSymbol) symbolCount[t.tokenSymbol] = (symbolCount[t.tokenSymbol] ?? 0) + 1;
@@ -119,10 +120,11 @@ async function fetchOnchainSummary(address: string): Promise<OnchainSummary | nu
       estimatedHoldDays: firstTs && lastTs ? Math.round((lastTs - firstTs) / 86400) : null,
       errorTxRatio: txs.length ? errorTxs / txs.length : 0,
       topTokenSymbols,
-      valueMovedEth: Math.round(valueMovedEth * 1e6) / 1e6,
+      valueMovedEth: Math.round(valueMovedEth * 1e4) / 1e4,
     };
-  } catch {
+  } catch (err) {
     clearTimeout(timeout);
+    console.error("Onchain fetch error:", err);
     return null;
   }
 }
@@ -131,25 +133,26 @@ function createFallbackAnalysis(address: string, market?: MarketInput): Omit<Ana
   const seed = hashString(address.toLowerCase() || "empty");
   const profiles = ["高リスク短期トレーダー", "スマートマネー追従型", "長期ガチホ寄り", "DeFiアクティブ運用型", "Meme高回転型"];
   const summaries = [
-    "このウォレットは短期の値幅取りが強く、DEX利用と高速回転が目立ちます。",
-    "市場の強いテーマに素早く反応するタイプで、資金移動のスピードが速いです。",
-    "保有期間が長めで、少数銘柄に集中する傾向が見られます。",
-    "流動性提供やDeFi運用が活発で、資金効率を重視しています。",
-    "Meme系トークンへの参加が多く、ボラティリティ耐性が高いです。",
+    "短期的な値幅取りを優先し、DEXでの高速な取引が目立ちます。",
+    "市場のトレンドに敏感で、クジラの動きに同調する傾向があります。",
+    "資産を動かさず、特定の有望銘柄を長期保有するスタイルです。",
+    "流動性提供やレンディングなど、オンチェーンの利回りを最大化しています。",
+    "話題のミームコインへ積極的に参加し、高いリスク許容度を持っています。",
   ];
   const verdicts = [
-    "短期変動に強いが、下落局面では撤退も速いタイプです。",
-    "トレンドの初動を拾う動きが見られ、追随判断が早いです。",
-    "銘柄数は絞り気味で、時間を味方にする運用です。",
-    "利回りと回転効率の両方を見ている、上級者寄りの使い方です。",
-    "話題性の強い資産に乗る傾向があり、結果が大きく振れやすいです。",
+    "ボラティリティを味方にする判断の速さが特徴です。",
+    "情報の鮮度を重視した、機動力のある運用を行っています。",
+    "市場のノイズに惑わされない、堅実なスタンスです。",
+    "スマートコントラクトを使いこなす、習熟度の高いユーザーです。",
+    "ハイリスク・ハイリターンを狙う、勝負師的な側面があります。",
   ];
   const idx = seed % profiles.length;
+  const changeStr = (market?.change24h ?? 0) >= 0 ? "+" : "";
   return {
     profile: profiles[idx],
-    summary: `${summaries[idx]} 直近の市場では ${market?.symbol ?? "unknown"} の変動が ${(market?.change24h ?? 0) >= 0 ? "+" : ""}${(market?.change24h ?? 0).toFixed(2)}%、出来高は ${Math.round(market?.volume ?? 0).toLocaleString()} です。`,
+    summary: `${summaries[idx]} 現在 ${market?.symbol ?? "対象銘柄"} は前日比 ${changeStr}${(market?.change24h ?? 0).toFixed(2)}% で推移しています。`,
     verdict: verdicts[idx],
-    tags: ["Demo Mode", "No Onchain Data", "Fallback"],
+    tags: ["Fallback", "Simulation", "No-Data"],
   };
 }
 
@@ -164,7 +167,7 @@ export async function POST(req: Request): Promise<NextResponse<AnalysisResult>> 
 
     if (!address) {
       return NextResponse.json(
-        { ...createFallbackAnalysis("0xdeadbeef"), provider: "fallback", onchainSource: "none", error: "address is required" },
+        { ...createFallbackAnalysis("0xdeadbeef"), provider: "fallback", onchainSource: "none", error: "Address is required" },
         { status: 400 }
       );
     }
@@ -172,37 +175,38 @@ export async function POST(req: Request): Promise<NextResponse<AnalysisResult>> 
     const onchain = await fetchOnchainSummary(address);
     const onchainSource: AnalysisResult["onchainSource"] = onchain ? "etherscan" : "none";
 
-    const apiKey = process.env.GROQ_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ ...createFallbackAnalysis(address, market), provider: "fallback", onchainSource });
     }
 
-    // ✅ Gemini API を直接呼ぶ
-    const prompt = `あなたはオンチェーンウォレット分析の専門家です。以下のデータを分析して、日本語で投資スタイルを診断してください。
+    const prompt = `あなたはプロのオンチェーンアナリストです。以下のデータから投資家のペルソナを特定してください。
 
-ウォレットアドレス: ${address}
-オンチェーンデータ: ${onchain ? JSON.stringify(onchain) : "データなし（市場コンテキストのみで分析してください）"}
-市場データ: ${JSON.stringify({ symbol: market?.symbol, change24h: market?.change24h, volume: market?.volume })}
+【分析対象】
+アドレス: ${address}
+直近20件の統計: ${onchain ? JSON.stringify(onchain) : "データなし（市場データのみで推測してください）"}
+現在の市場環境 (${market?.symbol ?? "Unknown"}): 24h騰落率 ${market?.change24h}% / 出来高 ${market?.volume}
 
-以下のJSON形式のみで回答してください（マークダウン不要）:
+【出力形式】
+必ず以下のJSON形式のみで回答してください。
 {
-  "profile": "投資スタイルを表す短いラベル（日本語）",
-  "summary": "オンチェーンデータを引用した1〜2文の要約（日本語）",
-  "verdict": "総合評価を1文で（日本語）",
-  "tags": ["英語タグ1", "英語タグ2", "英語タグ3"]
+  "profile": "投資スタイルを象徴する短い二つ名",
+  "summary": "データに基づいた行動特徴の要約（日本語2文以内）",
+  "verdict": "今後の市場に対するこのユーザーのアプローチへの助言（日本語1文）",
+  "tags": ["Tag1", "Tag2", "Tag3"]
 }`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" },
+          generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
         }),
         signal: controller.signal,
       }
@@ -210,38 +214,33 @@ export async function POST(req: Request): Promise<NextResponse<AnalysisResult>> 
 
     clearTimeout(timeout);
 
-    if (!response.ok) {
-      throw new Error(`Gemini error: ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`Gemini API returned ${response.status}`);
 
-    const data = (await response.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
+    const data = await response.json();
+    const rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!raw) {
-      return NextResponse.json({ ...createFallbackAnalysis(address, market), provider: "fallback", onchainSource });
-    }
+    if (!rawContent) throw new Error("Empty AI response");
 
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-    const parsed = JSON.parse(cleaned) as { profile?: string; summary?: string; verdict?: string; tags?: string[] };
-
-    if (!parsed.profile || !parsed.summary || !parsed.verdict) {
-      return NextResponse.json({ ...createFallbackAnalysis(address, market), provider: "fallback", onchainSource });
-    }
+    const parsed = JSON.parse(rawContent);
 
     return NextResponse.json({
-      profile: parsed.profile,
-      summary: parsed.summary,
-      verdict: parsed.verdict,
-      tags: Array.isArray(parsed.tags) && parsed.tags.length >= 3 ? parsed.tags.slice(0, 3) : ["AI-assisted", "Onchain", "Live"],
+      profile: parsed.profile || "分析不能",
+      summary: parsed.summary || "有効なデータが得られませんでした。",
+      verdict: parsed.verdict || "慎重な判断を推奨します。",
+      tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 3) : ["AI-Analyzed"],
       provider: "gemini",
       onchainSource,
     });
 
   } catch (error) {
+    console.error("POST Handler Error:", error);
     return NextResponse.json(
-      { ...createFallbackAnalysis(address || "0xdeadbeef", market), provider: "fallback", onchainSource: "none", error: error instanceof Error ? error.message : "Unknown error" },
+      {
+        ...createFallbackAnalysis(address || "0xdeadbeef", market),
+        provider: "fallback",
+        onchainSource: "none",
+        error: error instanceof Error ? error.message : "Internal Server Error",
+      },
       { status: 500 }
     );
   }
